@@ -1,19 +1,20 @@
-# Core ML
+# If your environment already runs Qwen2SAM_DeTexture, its deps also cover
+# this project — you can skip `pip install -r requirements.txt`. This file
+# is for fresh setups only.
+
+# Core ML (known-working here: torch 2.6.0+cu124, transformers 5.1.0).
 torch>=2.3
-# Qwen3-VL support was added in 4.51; 4.56+ irons out the image-grid code path
-# that otherwise triggers `vectorized_gather_kernel` on CUDA.
 transformers>=4.56
 
 # Qwen3-VL tokenizer/image utils
 sentencepiece
 tiktoken
-qwen-vl-utils
 
 # Vision / IO
 opencv-python-headless
 Pillow
-# SAM3 and dctorch require numpy<2; pip's resolver won't enforce this on its
-# own when tiktoken pulls numpy 2.x as a transitive upgrade.
+# SAM3 + dctorch require numpy<2. tiktoken's install otherwise pulls
+# numpy 2.x transitively.
 numpy<2,>=1.26
 
 # Matching + metrics
