@@ -7,6 +7,10 @@ torch>=2.3
 transformers>=4.56
 
 # Qwen3-VL tokenizer/image utils
+# qwen-vl-utils.process_vision_info is REQUIRED — on transformers >= 5.x the
+# bare `{"type": "image"}` placeholder pattern desyncs the image grid and
+# crashes CUDA with a gather-kernel OOB.
+qwen-vl-utils
 sentencepiece
 tiktoken
 

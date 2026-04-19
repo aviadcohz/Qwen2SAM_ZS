@@ -266,23 +266,34 @@ def generate_descriptions(
     k: int, max_new_tokens: int = 700,
 ) -> str:
     """
-    Exact-match the Qwen2SAM_DeTexture inference pattern (known-good in this
-    environment): bare `{"type": "image"}` placeholder + `images=[image_pil]`
-    to the processor.
+    Qwen3-VL inference via the official `qwen_vl_utils.process_vision_info`
+    path. On transformers >= 5.x, the bare `{"type": "image"}` placeholder
+    pattern can desync the image-grid-thw token count with the actual vision
+    tower output and crash CUDA with `vectorized_gather_kernel` OOB.
+    Embedding the PIL image into the message and letting `process_vision_info`
+    handle it keeps the chat-template expansion and the image features in
+    lock-step.
     """
+    from qwen_vl_utils import process_vision_info
+
     user_prompt = build_user_prompt(k)
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": [
-            {"type": "image"},
+            {"type": "image", "image": image_pil},
             {"type": "text", "text": user_prompt},
         ]},
     ]
     text = processor.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True,
     )
+    image_inputs, video_inputs = process_vision_info(messages)
     inputs = processor(
-        text=[text], images=[image_pil], return_tensors="pt", padding=True,
+        text=[text],
+        images=image_inputs,
+        videos=video_inputs,
+        return_tensors="pt",
+        padding=True,
     )
     inputs.pop("token_type_ids", None)
     inputs = {key: v.to(device) for key, v in inputs.items()}
