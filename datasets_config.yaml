@@ -1,0 +1,164 @@
+# Multi-model zero-shot evaluation suite — dataset & prompt registry.
+#
+# Every eval_*.py reads this file. Do NOT hardcode paths or prompts in the
+# eval scripts. K is always set from GT (len(textures) in the unified schema).
+#
+# prompts.<model_family>.mode:
+#   static    — use the exact `texts` list (list length must equal K_GT,
+#               padded/truncated). Per-class text.
+#   repeat    — repeat `text` K_GT times (used for grounded_sam3 on ADE20K;
+#               legacy for sam3_vanilla — prefer `proposal` there instead).
+#   proposal  — sam3_vanilla only: one generic `text`, routed through SAM3's
+#               native mask-proposal decoder; we keep top-K_GT by score. This
+#               is the fair multi-mask mode for datasets without a class
+#               vocabulary (no K identical-text collapse).
+#   single    — one conversational prompt for end-to-end VLMs that discover K
+#               regions themselves inside a single response.
+#
+# prompts.grounded_sam3.text is a single dot-separated string in the
+# Grounding DINO convention ("phrase1 . phrase2 . ...").
+
+padding:
+  # When a baseline returns fewer heatmaps than K_GT, pad with this static
+  # logit so Softmax pushes the phantom channel into the dustbin and the
+  # Hungarian matcher charges 0 IoU for the missed GT mask.
+  missing_logit: -1.0e4
+
+shared:
+  dustbin_logit: 0.0            # background channel logit (sigmoid p=0.5)
+  image_size: 1008              # SAM3 input size
+
+datasets:
+
+  CAID:
+    metadata: /home/aviad/datasets/CAID/metadata.json
+    schema: unified
+    k_source: gt                # read K from len(textures)
+    prompts:
+      sam3_vanilla:
+        mode: static
+        texts: ["water surface"]
+      grounded_sam3:
+        mode: static
+        text: "water surface ."
+      vlm_end2end:
+        mode: single
+        text: >-
+          Segment the water surface region in this image.
+          Return one binary mask.
+      # Sa2VA is trained on the "interleaved segmentation masks" caption
+      # format (see ByteDance/Sa2VA-4B README): it emits one [SEG] token
+      # per <p>entity</p> in its answer, yielding one mask per entity.
+      sa2va:
+        mode: single
+        text: >-
+          <image>Please describe the water surface in this image,
+          and respond with an interleaved segmentation mask for it.
+
+  RWTD:
+    metadata: /home/aviad/datasets/RWTD/metadata.json
+    schema: unified
+    k_source: gt
+    prompts:
+      sam3_vanilla:
+        mode: static
+        texts: ["foreground texture", "background texture"]
+      grounded_sam3:
+        mode: static
+        text: "foreground texture . background texture ."
+      vlm_end2end:
+        mode: single
+        text: >-
+          This image contains two distinct texture regions. Segment each
+          of them and return two binary masks, one per region.
+      sa2va:
+        mode: single
+        text: >-
+          <image>Please give a brief description of this image,
+          and respond with interleaved segmentation masks for the
+          distinct texture regions mentioned in the description.
+
+  STLD:
+    metadata: /home/aviad/datasets/STLD/metadata.json
+    schema: unified
+    k_source: gt
+    prompts:
+      sam3_vanilla:
+        mode: static
+        texts: ["foreground texture", "background texture"]
+      grounded_sam3:
+        mode: static
+        text: "foreground texture . background texture ."
+      vlm_end2end:
+        mode: single
+        text: >-
+          This image contains two distinct texture regions. Segment each
+          of them and return two binary masks, one per region.
+      sa2va:
+        mode: single
+        text: >-
+          <image>Please give a brief description of this image,
+          and respond with interleaved segmentation masks for the
+          distinct texture regions mentioned in the description.
+
+  ADE20k_Detecture:
+    metadata: /home/aviad/datasets/ADE20k_Detecture/metadata.json
+    schema: unified
+    k_source: gt
+    prompts:
+      sam3_vanilla:
+        # Proposal mode: one generic text → SAM3's mask-proposal decoder
+        # returns N candidates; we keep top-K_GT by confidence. Fair multi-
+        # mask mode for variable-K datasets with no class vocabulary
+        # (repeating the same text K times would collapse to 1 mask).
+        mode: proposal
+        text: "texture regions"
+      grounded_sam3:
+        mode: repeat
+        text: "texture regions ."
+      vlm_end2end:
+        mode: single
+        text: >-
+          Segment every distinct texture region you can see in this image.
+          Return one binary mask per region.
+      sa2va:
+        mode: single
+        text: >-
+          <image>Please give a brief description of this image,
+          and respond with interleaved segmentation masks for every
+          distinct region you mention.
+
+# Each model below is a *separate* row in the results tree
+# (results/<name>/<dataset>/...). Models that share an implementation script
+# distinguish themselves via `backend`. The mock VLM is intentionally left
+# out of the default list — it's for harness debugging only; run it on
+# demand with: `python eval_vlm_end2end.py --backend mock ...`.
+models:
+  - name: sam3_vanilla
+    script: eval_sam3_vanilla.py
+    env: texture_boundary
+
+  - name: grounded_sam3
+    script: eval_grounded_sam3.py
+    env: texture_boundary
+
+  # LISA is deferred: no HF-native checkpoint (xinlai/LISA-7B-v1 has no
+  # custom modeling code; loading requires cloning dvlab-research/LISA and
+  # installing its old-transformers deps, which conflict with this env's
+  # transformers 5.5 / torch 2.10 stack). Add it back under `models:`
+  # once a clean adapter (e.g. via a separate conda env) is in place.
+  # - name: lisa
+  #   script: eval_vlm_end2end.py
+  #   backend: lisa
+  #   env: texture_boundary
+
+  - name: sa2va
+    script: eval_vlm_end2end.py
+    backend: sa2va
+    env: texture_boundary
+
+  - name: qwen2sam_zs
+    # Shim over the existing evaluate_zero_shot_pipeline.py so Qwen-path
+    # results land in results/qwen2sam_zs/ with the same JSON + vis layout.
+    script: eval_qwen2sam_zs.py
+    env: texture_boundary

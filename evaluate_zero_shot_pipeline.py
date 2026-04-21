@@ -1,9 +1,10 @@
 """
-Qwen2SAM_ZS — Zero-Shot VLM → SAM3 Per-Sample-K Texture Segmentation Baseline.
+Qwen2SAM_Detecture_Benchmark — Zero-Shot VLM → SAM3 Per-Sample-K Texture
+Segmentation Baseline (the `qwen2sam_zs` row of the Detecture benchmark).
 
 The target region count K is set PER SAMPLE from the GT:
   RWTD              → K = 2 always.
-  ADE20k_DeTexture  → K = number of GT textures for that image (1..6).
+  ADE20k_Detecture  → K = number of GT textures for that image (1..6).
 
 Pipeline (no training, no custom bridges):
   Stage 1  Qwen3-VL-8B is prompted for EXACTLY K distinct surface regions and
@@ -20,13 +21,13 @@ Pipeline (no training, no custom bridges):
 Datasets supported out-of-the-box:
   rwtd              → /home/aviad/datasets/RWTD/metadata.json
   rwtd_phase1       → /home/aviad/RWTD/metadata_phase1.json             (legacy)
-  ade20k_detexture  → /home/aviad/datasets/ADE20k_DeTexture/metadata.json
+  ade20k_detecture  → /home/aviad/datasets/ADE20k_Detecture/metadata.json
   ade20k_textured   → /home/aviad/datasets/ADE20K_textured_images/metadata.json
   custom            → pass --metadata <path> for a unified-schema file.
 
 Run:
   python evaluate_zero_shot_pipeline.py --dataset rwtd
-  python evaluate_zero_shot_pipeline.py --dataset ade20k_detexture --limit 20
+  python evaluate_zero_shot_pipeline.py --dataset ade20k_detecture --limit 20
 """
 
 from __future__ import annotations
@@ -71,8 +72,37 @@ SYSTEM_PROMPT = (
 )
 
 
-def build_user_prompt(k: int) -> str:
-    """Build the Qwen user prompt parameterized by the exact number of regions K."""
+def build_user_prompt(k: int, task: str = "generic") -> str:
+    """Build the Qwen user prompt parameterized by the exact number of regions K.
+
+    `task` selects the opening framing:
+        "generic" — unconstrained surface-region parsing (RWTD / ADE20k / STLD).
+        "water"   — CAID-style: K=1, the one region is the water surface.
+                    No examples or clues beyond naming the class.
+    """
+    if task == "water":
+        format_lines = "\n".join(
+            f"TEXTURE_{i}: Texture of <description>" for i in range(1, k + 1)
+        )
+        return (
+            "This image contains a water surface region. All water pixels "
+            "share the same texture class.\n\n"
+            f"Write a single highly descriptive phrase (approximately 10-15 "
+            "words) for the water region. Include the following precise "
+            "information:\n"
+            "1. Semantic Name: a common name for the material or object class.\n"
+            "2. Distinct Visual Features: core attributes — color, pattern, "
+            "texture — that characterise the water surface.\n"
+            "3. Spatial Context: a brief note on position (e.g. 'upper "
+            "background', 'lower foreground', 'center').\n\n"
+            "IMPORTANT RULES:\n"
+            "• Describe the water as a collective surface/area, NOT "
+            "individual objects within it.\n"
+            f"• Output EXACTLY {k} TEXTURE_i line(s), no more, no less.\n\n"
+            "Format your response exactly like this:\n"
+            f"{format_lines}"
+        )
+
     if k == 2:
         # Preserve the original user-specified RWTD wording for K=2 samples.
         return (
@@ -96,7 +126,7 @@ def build_user_prompt(k: int) -> str:
             "TEXTURE_2: Texture of <description>"
         )
 
-    # Variable-K prompt (ADE20k_DeTexture and friends).
+    # Variable-K prompt (ADE20k_Detecture and friends).
     k_word = {
         1: "ONE", 2: "TWO", 3: "THREE", 4: "FOUR",
         5: "FIVE", 6: "SIX", 7: "SEVEN", 8: "EIGHT",
@@ -140,12 +170,21 @@ DATASET_REGISTRY = {
         "metadata": "/home/aviad/RWTD/metadata_phase1.json",
         "schema": "phase1",
     },
-    "ade20k_detexture": {
-        "metadata": "/home/aviad/datasets/ADE20k_DeTexture/metadata.json",
+    "ade20k_detecture": {
+        "metadata": "/home/aviad/datasets/ADE20k_Detecture/metadata.json",
         "schema": "unified",
     },
     "ade20k_textured": {
         "metadata": "/home/aviad/datasets/ADE20K_textured_images/metadata.json",
+        "schema": "unified",
+    },
+    "caid": {
+        "metadata": "/home/aviad/datasets/CAID/metadata.json",
+        "schema": "unified",
+        "task": "water",
+    },
+    "stld": {
+        "metadata": "/home/aviad/datasets/STLD/metadata.json",
         "schema": "unified",
     },
 }
@@ -263,7 +302,7 @@ def load_qwen_vlm(device: torch.device, model_name: str = "Qwen/Qwen3-VL-8B-Inst
 @torch.no_grad()
 def generate_descriptions(
     qwen, processor, image_pil: Image.Image, device: torch.device,
-    k: int, max_new_tokens: int = 700,
+    k: int, max_new_tokens: int = 700, task: str = "generic",
 ) -> str:
     """
     Qwen3-VL inference via the official `qwen_vl_utils.process_vision_info`
@@ -276,7 +315,7 @@ def generate_descriptions(
     """
     from qwen_vl_utils import process_vision_info
 
-    user_prompt = build_user_prompt(k)
+    user_prompt = build_user_prompt(k, task=task)
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": [
@@ -358,7 +397,8 @@ def _get_img_feats(sam3, backbone_out: dict, img_ids: torch.Tensor):
 
 @torch.no_grad()
 def run_sam3_semantic(sam3, backbone_out, prompt_embed, prompt_mask):
-    B = prompt_embed.shape[0]
+    # SAM3 forward_text returns language_features as (N_tokens, B, 256).
+    B = prompt_embed.shape[1]
     device = prompt_embed.device
     img_ids = torch.arange(B, device=device)
 
@@ -366,7 +406,7 @@ def run_sam3_semantic(sam3, backbone_out, prompt_embed, prompt_mask):
         sam3, backbone_out, img_ids
     )
 
-    prompt = prompt_embed.transpose(0, 1)  # (N, B, 256)
+    prompt = prompt_embed  # already (N, B, 256)
     prompt_pos = torch.zeros_like(prompt)
 
     memory_dict = sam3.transformer.encoder(
@@ -400,8 +440,9 @@ def run_sam3_semantic(sam3, backbone_out, prompt_embed, prompt_mask):
 
 @torch.no_grad()
 def encode_text_prompt(sam3, description: str, device: torch.device):
+    # language_features: (N_tokens, B, 256)   language_mask: (B, N_tokens)
     text_out = sam3.backbone.forward_text([description], device=device)
-    prompt = text_out["language_features"].squeeze(1)
+    prompt = text_out["language_features"]
     mask = text_out["language_mask"]
     if mask.ndim == 3:
         mask = mask.squeeze(1)
@@ -701,7 +742,7 @@ def visualize_sample(
                ncol=min(7, N + 1), bbox_to_anchor=(0.5, 0.0), fontsize=9)
 
     fig.suptitle(
-        f"Qwen2SAM_ZS — {dataset_name} — {sample_id}  (N={N}, M={M})",
+        f"Qwen2SAM_Detecture_Benchmark — {dataset_name} — {sample_id}  (N={N}, M={M})",
         fontsize=13,
     )
     fig.tight_layout(rect=[0, 0.02, 1, 0.97])
@@ -724,6 +765,7 @@ def evaluate_sample(
     dataset_name: str,
     max_textures: int = MAX_TEXTURES,
     min_gt_area_frac: float = 0.0,
+    task: str = "generic",
 ) -> dict:
     sid = sample["id"]
     image_bgr = cv2.imread(sample["image_path"])
@@ -743,7 +785,7 @@ def evaluate_sample(
     K = len(gt_masks)  # per-sample target count
 
     # --- Stage 1: Qwen descriptions (exactly K) -------------------------- #
-    raw = generate_descriptions(qwen, qwen_proc, image_pil, device, k=K)
+    raw = generate_descriptions(qwen, qwen_proc, image_pil, device, k=K, task=task)
     descs = parse_descriptions(raw, max_n=max(max_textures, K))
     if len(descs) == 0:
         return {"id": sid, "status": "qwen_parse_failed", "raw_qwen": raw,
@@ -779,6 +821,15 @@ def evaluate_sample(
     # --- Stage 4: Hungarian matching (K × M) ----------------------------- #
     match = hungarian_match(pred_masks, gt_masks)
 
+    # --- ARI: permutation-invariant partition agreement ------------------ #
+    # GT class map: label i+1 for each GT mask, 0 = background (no GT mask).
+    gt_class = np.zeros((gt_h, gt_w), dtype=np.int32)
+    for j, m in enumerate(gt_masks):
+        gt_class[m > 0.5] = j + 1
+    # Pred class map: keep argmax_map as-is (values 0..N-1 = textures, N = dustbin).
+    from sklearn.metrics import adjusted_rand_score
+    ari = float(adjusted_rand_score(gt_class.ravel(), argmax_map.ravel()))
+
     # --- Visualization --------------------------------------------------- #
     if vis_dir is not None:
         visualize_sample(
@@ -805,6 +856,7 @@ def evaluate_sample(
         "panoptic_dice": match["panoptic_dice"],
         "matched_mean_iou": match["matched_mean_iou"],
         "matched_mean_dice": match["matched_mean_dice"],
+        "ari": ari,
         "bg_coverage": float((argmax_map == N).mean()),
     }
 
@@ -815,7 +867,7 @@ def evaluate_sample(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Qwen2SAM_ZS — Zero-Shot VLM→SAM3 baseline (variable N textures)"
+        description="Qwen2SAM_Detecture_Benchmark — Zero-Shot VLM→SAM3 baseline (variable N textures)"
     )
     parser.add_argument("--dataset", type=str, default="rwtd",
                         choices=list(DATASET_REGISTRY.keys()) + ["custom"])
@@ -824,7 +876,7 @@ def main():
     parser.add_argument("--schema", type=str, default=None,
                         choices=["unified", "phase1"])
     parser.add_argument("--output_dir", type=str,
-                        default="/home/aviad/Qwen2SAM_ZS/eval_results")
+                        default="/home/aviad/Qwen2SAM_Detecture_Benchmark/eval_results")
     parser.add_argument("--image_size", type=int, default=SAM3_SIZE)
     parser.add_argument("--dustbin_logit", type=float, default=0.0,
                         help="Static logit for dustbin channel (0.0 ≡ 0.5 sigmoid prob).")
@@ -842,6 +894,10 @@ def main():
     parser.add_argument("--vis_every", type=int, default=1,
                         help="Write a visualization every N samples (default 1 = all).")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--task", type=str, default=None,
+                        choices=["generic", "water"],
+                        help="Prompt framing. Overrides the dataset registry entry. "
+                             "Default: use the registry's 'task' (or 'generic').")
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
@@ -854,11 +910,14 @@ def main():
         metadata_path = args.metadata
         schema = args.schema or "unified"
         dataset_name = "custom"
+        task = args.task or "generic"
     else:
         spec = DATASET_REGISTRY[args.dataset]
         metadata_path = args.metadata or spec["metadata"]
         schema = args.schema or spec["schema"]
         dataset_name = args.dataset
+        task = args.task or spec.get("task", "generic")
+    print(f"[prompt] task={task}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     output_dir = Path(args.output_dir) / dataset_name
@@ -893,6 +952,7 @@ def main():
                 dataset_name=dataset_name,
                 max_textures=args.max_textures,
                 min_gt_area_frac=args.min_gt_area_frac,
+                task=task,
             )
         except Exception as e:  # noqa: BLE001
             res = {"id": sid, "status": "exception", "error": repr(e)}
@@ -903,6 +963,7 @@ def main():
                   f"N={res['n_pred']} M={res['n_gt']}  "
                   f"pIoU={res['panoptic_iou']:.4f}  "
                   f"mIoU={res['matched_mean_iou']:.4f}  "
+                  f"ARI={res['ari']:.4f}  "
                   f"bg={res['bg_coverage']:.2f}")
         else:
             print(f"  [{i+1:4d}/{len(samples)}] {str(sid):>22s}  "
@@ -915,6 +976,7 @@ def main():
     summary = {
         "dataset": dataset_name,
         "schema": schema,
+        "task": task,
         "metadata_path": str(metadata_path),
         "n_total": len(results),
         "n_ok": len(ok),
@@ -930,6 +992,7 @@ def main():
             "panoptic_dice": float(np.mean([r["panoptic_dice"] for r in ok])),
             "matched_mean_iou": float(np.mean([r["matched_mean_iou"] for r in ok])),
             "matched_mean_dice": float(np.mean([r["matched_mean_dice"] for r in ok])),
+            "mean_ari": float(np.mean([r["ari"] for r in ok])),
             "mean_n_pred": float(np.mean([r["n_pred"] for r in ok])),
             "mean_n_gt": float(np.mean([r["n_gt"] for r in ok])),
             "mean_bg_coverage": float(np.mean([r["bg_coverage"] for r in ok])),
@@ -947,7 +1010,7 @@ def main():
         json.dump({"summary": summary, "samples": results}, f, indent=2, default=str)
 
     print("\n" + "=" * 80)
-    print(f"  Qwen2SAM_ZS [{dataset_name}] — "
+    print(f"  Qwen2SAM_Detecture_Benchmark [{dataset_name}] — "
           f"{summary['n_ok']}/{summary['n_total']} ok in {elapsed:.1f}s")
     print("=" * 80)
     if ok:
@@ -955,6 +1018,7 @@ def main():
               f"Panoptic Dice : {summary['panoptic_dice']:.4f}")
         print(f"  Matched mIoU  : {summary['matched_mean_iou']:.4f}   "
               f"Matched mDice : {summary['matched_mean_dice']:.4f}")
+        print(f"  Mean ARI      : {summary['mean_ari']:.4f}")
         print(f"  <N_pred>      : {summary['mean_n_pred']:.2f}   "
               f"<N_gt>        : {summary['mean_n_gt']:.2f}   "
               f"<bg>          : {summary['mean_bg_coverage']*100:.2f}%")

@@ -11,7 +11,7 @@ If (1) succeeds and (2) fails we know the issue is in OUR prompt / image path.
 If BOTH fail, Qwen3-VL itself is mis-installed on 179 and the fix is in the env.
 
 Run:
-  cd ~/Qwen2SAM_ZS
+  cd ~/Qwen2SAM_Detecture_Benchmark
   python diagnose_qwen.py
   # optional: point at a specific image
   python diagnose_qwen.py --image /home/aviad/datasets/RWTD/images/1.jpg

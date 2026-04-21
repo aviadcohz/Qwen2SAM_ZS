@@ -1,4 +1,4 @@
-# If your environment already runs Qwen2SAM_DeTexture, its deps also cover
+# If your environment already runs Qwen2SAM_Detecture, its deps also cover
 # this project — you can skip `pip install -r requirements.txt`. This file
 # is for fresh setups only.
 

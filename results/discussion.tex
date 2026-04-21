@@ -1,0 +1,80 @@
+% Zero-shot texture-segmentation comparison — narrative discussion.
+% Generated manually after running master_runner.py on all four datasets.
+% Numbers match Tables~\ref{tab:miou} and \ref{tab:ari}, produced by
+% aggregate_results.py (summary.tex / summary_ari.tex).
+%
+% Include into the main manuscript with:  \input{results/discussion.tex}
+%
+\subsection{Zero-Shot Comparison}
+\label{sec:zs_comparison}
+
+We evaluate four families that can turn a natural-language query into a
+per-region segmentation mask without any task-specific training:
+\texttt{sam3\_vanilla} grounds short class phrases through SAM3's native
+semantic-segmentation head and switches to SAM3's mask-proposal decoder on
+ADE20K, where no class vocabulary is available;
+\texttt{grounded\_sam3} runs Grounding\,DINO on a per-class phrase list
+and feeds the top-$K$ boxes into SAM3's geometry encoder;
+\texttt{sa2va} is the end-to-end vision-language baseline (ByteDance
+Sa2VA-4B) prompted with the interleaved-segmentation caption format it was
+trained on;
+and \texttt{qwen2sam\_zs} is our proposed Qwen3-VL\,+\,SAM3 pipeline.
+Every family is scored with the identical post-processing stack—softmax
+against a shared dustbin logit, Hungarian matching between predicted and
+ground-truth masks, and a uniform $-10^{4}$ logit pad applied whenever a
+baseline returns fewer than $K_\text{GT}$ regions—so that under-producing
+masks incurs a bounded penalty rather than being silently rewarded. All
+runs use $n = 3091$ (CAID), $253$ (RWTD), $200$ (STLD), and $212$
+(ADE20K-Detecture) test samples respectively.
+
+The proposed Qwen2SAM\,ZS pipeline achieves the strongest mean across
+every metric we report: $0.834$ matched-mean IoU, $0.876$ Dice, and
+$0.798$ adjusted Rand index, leading the runner-up (Sa2VA-4B) by
+$+11.8$, $+11.8$, and $+9.1$ percentage points respectively on the
+average over the four datasets. The margin is largest on the synthetic
+benchmarks where class identity must be inferred from texture alone
+(STLD, $+14.0$ mIoU over the best baseline) and on ADE20K-Detecture,
+where the number of regions varies per image and the VLM component of
+our pipeline has to discover $K$ itself ($+6.4$ mIoU over Sa2VA). On
+real-world texture pairs (RWTD), the advantage persists but shrinks
+($+8.0$ mIoU over Grounding-DINO\,+\,SAM3), suggesting that box-level
+priors close part of the gap when texture regions happen to coincide
+with salient foreground objects.
+
+The single dataset where a simpler baseline outperforms our pipeline is
+CAID, on which \texttt{sam3\_vanilla} reaches $0.901$ mIoU and $0.817$
+ARI against our $0.866$ and $0.773$. The gap is instructive rather than
+damaging: CAID poses a single, linguistically unambiguous class
+(``water surface''), and feeding that exact phrase directly into SAM3's
+text encoder is the shortest path from prompt to mask. Any additional
+reasoning step---Qwen describing the scene, Grounding-DINO drawing a
+box, or Sa2VA emitting a paragraph with interleaved \texttt{[SEG]}
+tokens---adds noise without adding signal. Our pipeline's $0.773$ ARI
+on the same dataset is nonetheless above every other baseline except
+\texttt{sam3\_vanilla}, indicating that when the class is already
+canonical, elaboration costs a few IoU points but still produces a
+consistent partition. Practically, CAID argues for a fast-path that
+skips the VLM when the user supplies a clean class term; the rest of
+our results demonstrate why the VLM is needed whenever they do not.
+
+The mIoU--ARI relationship is the most useful diagnostic across
+baselines. \texttt{grounded\_sam3} exhibits the widest mIoU--ARI
+dispersion on CAID ($0.622$ vs. $0.404$), where irregular shorelines
+expose the limits of axis-aligned box priors: the Hungarian matcher
+can still pair a coarsely correct box with a GT mask, but the pixel-
+wise partition leaks across the waterline. Sa2VA shows the opposite
+imbalance on ADE20K-Detecture: its mIoU ($0.631$) is modest relative to
+its ARI ($0.698$), indicating that its interleaved \texttt{[SEG]}
+masks describe the scene coherently even when any individual overlap
+with GT is imperfect. Our method keeps the two metrics close on every
+dataset (mIoU--ARI gap of at most $0.09$ where mIoU leads, and an
+\emph{inversion}---ARI exceeding mIoU---on ADE20K-Detecture), a direct
+consequence of routing the VLM's per-region grounding through SAM3
+rather than generating masks from scratch: grounding preserves boundary fidelity, while the
+language-side caption preserves partition coherence. The combined
+mIoU and ARI columns of Table~\ref{tab:miou} thus support the same
+conclusion: a VLM\,+\,grounded-segmenter composition outperforms
+either component in isolation, whether that component is a pure text
+encoder (\texttt{sam3\_vanilla}), a detection-prior box decoder
+(\texttt{grounded\_sam3}), or an end-to-end conversational segmenter
+(\texttt{sa2va}).
