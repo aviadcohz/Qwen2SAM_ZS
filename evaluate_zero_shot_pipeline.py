@@ -876,7 +876,7 @@ def main():
     parser.add_argument("--schema", type=str, default=None,
                         choices=["unified", "phase1"])
     parser.add_argument("--output_dir", type=str,
-                        default="/home/aviad/Qwen2SAM_Detecture_Benchmark/eval_results")
+                        default="/home/aviad/Detecture/Qwen2SAM_Detecture_Benchmark/eval_results")
     parser.add_argument("--image_size", type=int, default=SAM3_SIZE)
     parser.add_argument("--dustbin_logit", type=float, default=0.0,
                         help="Static logit for dustbin channel (0.0 ≡ 0.5 sigmoid prob).")

@@ -1,5 +1,7 @@
 # Qwen2SAM_Detecture_Benchmark
 
+> *Part of the [Detecture](../) umbrella — this is the **benchmark** component. The **model under evaluation** lives at [../Qwen2SAM_Detecture/](../Qwen2SAM_Detecture/); the **data pipeline** that produces its training data lives at [../DetectureMiner/](../DetectureMiner/).*
+
 Zero-shot evaluation suite for the **Qwen2SAM_Detecture** paper. Compares
 four model families on four texture-segmentation datasets under an
 identical scoring stack (softmax + dustbin + Hungarian + ARI + fixed
